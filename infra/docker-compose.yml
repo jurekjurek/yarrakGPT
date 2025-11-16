@@ -1,0 +1,32 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: company-llm-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: company_llm
+      POSTGRES_USER: company_llm_user
+      POSTGRES_PASSWORD: supersecretpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ../backend
+    container_name: company-llm-backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: db           # <--- talk to the db container by name
+      DB_PORT: 5432
+      DB_NAME: company_llm
+      DB_USER: company_llm_user
+      DB_PASSWORD: supersecretpassword
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+volumes:
+  db_data:
