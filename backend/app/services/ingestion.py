@@ -1,20 +1,15 @@
 # backend/app/services/ingestion.py
+
 from uuid import UUID
 from typing import List
-import numpy as np
 from psycopg2.extensions import connection as PGConnection
+import os
+from .chunking import read_pdf_text_by_page, chunk_text
+from psycopg2.extras import Json
 
-from .chunking import extract_text_from_pdf, chunk_text
+EMBEDDING_DIM = 768  # still needed for the embedding column; dummy for now
 
-# this file: 
-# extracts text 
-# chunks it 
-# inserts into 'chunks'
-# updates the documents.status
 
-EMBEDDING_DIM = 768  # adjust later to match Vertex AI embedding size
-
-# this will be embedding AI in the future
 def dummy_embedding(text: str) -> list[float]:
     """
     Temporary placeholder for embedding generation.
@@ -23,6 +18,7 @@ def dummy_embedding(text: str) -> list[float]:
     """
     return [0.0] * EMBEDDING_DIM
 
+
 def ingest_document(
     conn: PGConnection,
     tenant_id: UUID,
@@ -30,40 +26,47 @@ def ingest_document(
     file_path: str,
 ):
     """
-    End-to-end ingestion for a single document:
-    - extract text from file
-    - chunk text
-    - generate embeddings (dummy for now)
-    - insert into chunks table
+    Ingest a single document:
+    - read PDF by page
+    - chunk each page using token-based chunking
+    - insert chunks into DB with dummy embeddings and metadata (filename, page)
     - set documents.status = 'ready'
     """
-    # 1. Extract text
-    text = extract_text_from_pdf(file_path)
+    filename = os.path.basename(file_path)
 
-    # 2. Chunk text
-    chunks = chunk_text(text)
+    # 1. Read pages
+    pages = read_pdf_text_by_page(file_path)
 
-    # 3. Insert chunks with dummy embeddings
+    # 2. Build chunks with metadata
     with conn.cursor() as cur:
-        for idx, chunk in enumerate(chunks):
-            emb = dummy_embedding(chunk)
-            # note: CAST to vector via array::vector
-            cur.execute(
-                """
-                INSERT INTO chunks (tenant_id, document_id, chunk_index, text, embedding, metadata)
-                VALUES (%s, %s, %s, %s, %s::vector, %s)
-                """,
-                (
-                    str(tenant_id),
-                    str(document_id),
-                    idx,
-                    chunk,
-                    emb,  # psycopg2 will send as array, then we cast to vector
-                    None,
-                ),
-            )
+        chunk_counter = 0
+        for page_idx, page_text in enumerate(pages, start=1):
+            if not page_text or not page_text.strip():
+                continue
+            chunks = chunk_text(page_text, max_tokens=220, overlap=40)
+            for chunk_text_str in chunks:
+                emb = dummy_embedding(chunk_text_str)
+                metadata = {
+                    "filename": filename,
+                    "page": page_idx,
+                }
+                cur.execute(
+                    """
+                    INSERT INTO chunks (tenant_id, document_id, chunk_index, text, embedding, metadata)
+                    VALUES (%s, %s, %s, %s, %s::vector, %s)
+                    """,
+                    (
+                        str(tenant_id),
+                        str(document_id),
+                        chunk_counter,
+                        chunk_text_str,
+                        emb,
+                        Json(metadata),
+                    ),
+                )
+                chunk_counter += 1
 
-        # 4. Update document status
+        # 3. Update document status
         cur.execute(
             """
             UPDATE documents

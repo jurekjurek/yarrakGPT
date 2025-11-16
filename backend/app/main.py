@@ -12,6 +12,7 @@ from .services.auth import authenticate_user, create_access_token, get_current_u
 from datetime import timedelta
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import schemas
 from .schemas import UserOut
 from .config import settings
 
@@ -165,46 +166,35 @@ def query_data(
     conn = Depends(get_db),
 ):
     """
-    Ask a question about a tenant's documents.
-
-    Steps:
-    - embed the question (dummy for now)
-    - retrieve top_k relevant chunks from DB
-    - build a RAG prompt
-    - call LLM (dummy for now)
-    - return answer + sources
+    Ask a question about a tenant's documents using lexical BM25 + TF-IDF retrieval.
     """
     tenant_id = current_user.tenant_id
     question = payload.question
     top_k = payload.top_k
 
-    # 1. Embed the question
-    query_embedding = rag.get_query_embedding(question)
+    # 1. Retrieve relevant chunks via your hybrid lexical search
+    hits = rag.retrieve_relevant_chunks_lexical(conn, tenant_id, question, top_k=top_k)
 
-    # 2. Retrieve relevant chunks
-    chunks = rag.retrieve_relevant_chunks(conn, tenant_id, query_embedding, top_k=top_k)
-
-    if not chunks:
-        # No chunks found for this tenant
+    if not hits:
         return schemas.QueryResponse(
             answer="Ich konnte keine passenden Informationen in den Dokumenten finden.",
             sources=[],
         )
 
-    # 3. Build prompt
-    prompt = rag.build_rag_prompt(question, chunks)
+    # 2. Build prompt from hits (your build_prompt)
+    prompt = rag.build_rag_prompt(question, hits)
 
-    # 4. Call LLM (dummy)
+    # 3. Call LLM (dummy for now)
     answer = rag.call_llm(prompt)
 
-    # 5. Build sources list
+    # 4. Map hits to SourceChunk for frontend
     sources = [
         schemas.SourceChunk(
-            document_id=row["document_id"],
-            chunk_index=row["chunk_index"],
-            text=row["text"],
+            document_id=h["document_id"],
+            chunk_index=h["chunk_index"],
+            text=h["text"],
         )
-        for row in chunks
+        for h in hits
     ]
 
     return schemas.QueryResponse(

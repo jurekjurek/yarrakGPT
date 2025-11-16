@@ -7,3 +7,4 @@ email-validator
 numpy
 python-multipart
 python-jose[cryptography]
+PyPDF2
